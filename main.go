@@ -35,7 +35,7 @@ func parseGeoJSONFile(filename string) (interface{}, error) {
 	}
 	return result, err
 }
-func qualitativeReview(detectedGeoJSONs []interface{}, baselineGeoJSONs geojson.FeatureCollection) error {
+func qualitativeReview(detectedGeometries *geos.Geometry, baselineGeoJSONs geojson.FeatureCollection) error {
 	var (
 		matchedFeatures []geojson.Feature
 		geometry        *geos.Geometry
@@ -43,35 +43,6 @@ func qualitativeReview(detectedGeoJSONs []interface{}, baselineGeoJSONs geojson.
 		bytes           []byte
 		count           int
 	)
-	// Put the detected geometries into a collection for later processing
-	detectedGeometries, err := geos.NewCollection(geos.MULTILINESTRING)
-	if err != nil {
-		return err
-	}
-
-	for inx := 0; inx < len(detectedGeoJSONs); inx++ {
-		// Transform the GeoJSON to a GEOS Geometry
-		geometry, err = toGeos(detectedGeoJSONs[inx])
-		if err == nil {
-			// If we get a polygon, we really just want its outer ring for now
-			ttype, _ := geometry.Type()
-			if ttype == geos.POLYGON {
-				geometry, err = geometry.Shell()
-			}
-			if err == nil {
-				detectedGeometries, err = detectedGeometries.Union(geometry)
-			}
-		}
-		if err != nil {
-			return err
-		}
-	}
-
-	// Join the geometries when possible
-	detectedGeometries, err = detectedGeometries.LineMerge()
-	if err != nil {
-		return err
-	}
 
 	features := baselineGeoJSONs.Features
 
@@ -113,11 +84,47 @@ func qualitativeReview(detectedGeoJSONs []interface{}, baselineGeoJSONs geojson.
 	return err
 }
 
+func prepareDetected(detectedGeoJSON interface{}) (*geos.Geometry, error) {
+	var (
+		geometry *geos.Geometry
+		err      error
+	)
+
+	result, err := geos.NewCollection(geos.MULTILINESTRING)
+
+	// Pluck the geometries into an array
+	detectedGJGeometries := geojson.ToGeometryArray(detectedGeoJSON)
+
+	for inx := 0; inx < len(detectedGJGeometries); inx++ {
+		// Transform the GeoJSON to a GEOS Geometry
+		geometry, err = toGeos(detectedGJGeometries[inx])
+		if err == nil {
+			// If we get a polygon, we really just want its outer ring for now
+			ttype, _ := geometry.Type()
+			if ttype == geos.POLYGON {
+				geometry, err = geometry.Shell()
+			}
+			if err == nil {
+				result, err = result.Union(geometry)
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	if err == nil {
+		// Join the geometries when possible
+		result, err = result.LineMerge()
+	}
+	return result, err
+}
+
 func main() {
 	var (
 		args                = os.Args[1:]
 		filename, filenameB string
-		detectedGeometries  []interface{}
+		detectedGeometries  *geos.Geometry
 		detectedGeoJSON     interface{}
 		baselineGeoJSON     interface{}
 		err                 error
@@ -136,8 +143,11 @@ func main() {
 		log.Printf("File read error: %v\n", err)
 		os.Exit(1)
 	}
-	// Pluck the geometries into an array
-	detectedGeometries = geojson.ToGeometryArray(detectedGeoJSON)
+	detectedGeometries, err = prepareDetected(detectedGeoJSON)
+	if err != nil {
+		log.Printf("Could not prepare deteced geometries for analysis: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Retrieve the baseline features as GeoJSON
 	baselineGeoJSON, err = parseGeoJSONFile(filenameB)
