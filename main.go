@@ -27,14 +27,99 @@ import (
 	"github.com/venicegeo/geojson-go/geojson"
 )
 
+func parseGeoJSONFile(filename string) (interface{}, error) {
+	var result interface{}
+	bytes, err := ioutil.ReadFile(filename)
+	if err == nil {
+		result, err = geojson.Parse(bytes)
+	}
+	return result, err
+}
+func qualitativeReview(detectedGeoJSONs []interface{}, baselineGeoJSONs geojson.FeatureCollection) error {
+	var (
+		matchedFeatures []geojson.Feature
+		geometry        *geos.Geometry
+		err             error
+		bytes           []byte
+		count           int
+	)
+	// Put the detected geometries into a collection for later processing
+	detectedGeometries, err := geos.NewCollection(geos.MULTILINESTRING)
+	if err != nil {
+		return err
+	}
+
+	for inx := 0; inx < len(detectedGeoJSONs); inx++ {
+		// Transform the GeoJSON to a GEOS Geometry
+		geometry, err = toGeos(detectedGeoJSONs[inx])
+		if err == nil {
+			// If we get a polygon, we really just want its outer ring for now
+			ttype, _ := geometry.Type()
+			if ttype == geos.POLYGON {
+				geometry, err = geometry.Shell()
+			}
+			if err == nil {
+				detectedGeometries, err = detectedGeometries.Union(geometry)
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	// Join the geometries when possible
+	detectedGeometries, err = detectedGeometries.LineMerge()
+	if err != nil {
+		return err
+	}
+
+	features := baselineGeoJSONs.Features
+
+	// Try to match the geometry for each feature with what we detected
+	for inx := 0; inx < len(features); inx++ {
+		feature := features[inx]
+		matchFeature(&feature, detectedGeometries)
+		matchedFeatures = append(matchedFeatures, feature)
+	}
+
+	// Construct new features for the geometries that didn't match up
+	var newDetection = make(map[string]interface{})
+	newDetection[DETECTION] = "New Detection"
+	count, err = detectedGeometries.NGeometry()
+	for inx := 0; inx < count; inx++ {
+		var gjGeometry interface{}
+		geometry, err = detectedGeometries.Geometry(inx)
+		if err != nil {
+			break
+		}
+		gjGeometry, err = fromGeos(geometry)
+		if err == nil {
+			feature := geojson.Feature{Type: geojson.FEATURE,
+				Geometry:   gjGeometry,
+				Properties: newDetection}
+			matchedFeatures = append(matchedFeatures, feature)
+		} else {
+			break
+		}
+	}
+
+	if err == nil {
+		fc := geojson.NewFeatureCollection(matchedFeatures)
+		bytes, err = json.Marshal(fc)
+		if err == nil {
+			fmt.Printf("%v\n", string(bytes))
+		}
+	}
+	return err
+}
+
 func main() {
 	var (
 		args                = os.Args[1:]
 		filename, filenameB string
-		detectedGeometries  []*geos.Geometry
-		geometry            *geos.Geometry
-		geojsons            []interface{}
-		matchedFeatures     []geojson.Feature
+		detectedGeometries  []interface{}
+		detectedGeoJSON     interface{}
+		baselineGeoJSON     interface{}
 		err                 error
 	)
 	if len(args) > 1 {
@@ -45,76 +130,26 @@ func main() {
 		filenameB = "test/baseline.geojson"
 	}
 
-	// Retrieve the detected features as geometries
-	bytes, err := ioutil.ReadFile(filename)
+	// Retrieve the detected features as GeoJSON
+	detectedGeoJSON, err = parseGeoJSONFile(filename)
 	if err != nil {
 		log.Printf("File read error: %v\n", err)
 		os.Exit(1)
 	}
-	geojsons, err = parseGeoJSONToGeometries(bytes)
-	if err != nil {
-		log.Printf("GeoJSON parse error: %v\n", err)
-		os.Exit(1)
-	}
+	// Pluck the geometries into an array
+	detectedGeometries = geojson.ToGeometryArray(detectedGeoJSON)
 
-	// Put their geometries into an array for later processing
-	for inx := 0; inx < len(geojsons); inx++ {
-		geometry, err = toGeos(geojsons[inx])
-		if err == nil {
-			detectedGeometries = append(detectedGeometries, geometry)
-		} else {
-			break
-		}
-	}
-
-	// Join the geometries when possible
-	detectedGeometries, err = join(detectedGeometries)
-	if err != nil {
-		log.Printf("Join error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Retrieve the baseline features
-	bytes, err = ioutil.ReadFile(filenameB)
+	// Retrieve the baseline features as GeoJSON
+	baselineGeoJSON, err = parseGeoJSONFile(filenameB)
 	if err != nil {
 		log.Printf("File read error: %v\n", err)
 		os.Exit(1)
 	}
-	fcIfc, err := geojson.Parse(bytes)
-	if err != nil {
-		log.Printf("GeoJSON parse error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// We are expecting a feature collection
-	fc, found := fcIfc.(geojson.FeatureCollection)
+	fc, found := baselineGeoJSON.(geojson.FeatureCollection)
 	if found {
-		features := fc.Features
-		// Try to match the geometry for each feature with what we detected
-		for inx := 0; inx < len(features); inx++ {
-			feature := features[inx]
-			matchFeature(&feature, &detectedGeometries)
-			matchedFeatures = append(matchedFeatures, feature)
-		}
-
-		// Construct new features for the geometries that didn't match up
-		var newDetection = make(map[string]interface{})
-		newDetection["Detection"] = "New Detection"
-		for inx := 0; inx < len(detectedGeometries); inx++ {
-			var geometry interface{}
-			geometry, err = fromGeos(detectedGeometries[inx])
-			if err == nil {
-				feature := geojson.Feature{Type: geojson.FEATURE,
-					Geometry:   geometry,
-					Properties: newDetection}
-				matchedFeatures = append(matchedFeatures, feature)
-			}
-		}
-	}
-
-	fc.Features = matchedFeatures
-	bytes, err = json.Marshal(fc)
-	if err == nil {
-		fmt.Printf("%v\n", string(bytes))
+		qualitativeReview(detectedGeometries, fc)
+	} else {
+		log.Print("Baseline input must be a GeoJSON FeatureCollection.")
+		os.Exit(1)
 	}
 }

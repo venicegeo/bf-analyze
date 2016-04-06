@@ -16,41 +16,150 @@ limitations under the License.
 
 package main
 
-import "github.com/paulsmith/gogeos/geos"
+import (
+	"log"
 
-func join(geometries []*geos.Geometry) ([]*geos.Geometry, error) {
-	var result []*geos.Geometry
-	if len(geometries) == 0 {
-		return result, nil
+	"github.com/paulsmith/gogeos/geos"
+	"github.com/venicegeo/geojson-go/geojson"
+)
+
+const (
+	// DETECTION is the key for the GeoJSON object to indicate whether a shoreline
+	// was previously detected
+	DETECTION = "detection"
+)
+
+func parseCoord(input []float64) geos.Coord {
+	return geos.NewCoord(input[0], input[1])
+}
+func parseCoordArray(input [][]float64) []geos.Coord {
+	var result []geos.Coord
+	for inx := 0; inx < len(input); inx++ {
+		result = append(result, parseCoord(input[inx]))
 	}
+	return result
+}
+
+func toGeos(input interface{}) (*geos.Geometry, error) {
 	var (
-		err         error
-		count       int
-		newGeometry *geos.Geometry
+		geometry *geos.Geometry
+		err      error
 	)
 
-	// Union the geometries together
-	newGeometry, err = geos.NewCollection(geos.GEOMETRYCOLLECTION, geometries...)
-
-	// Merge the linestrings together when possible (when their endpoints match)
-	newGeometry, err = newGeometry.LineMerge()
-	if err != nil {
-		return result, err
-	}
-
-	// Pull the resulting geometries out of the MultiLineString and
-	// turn them to an array
-	count, err = newGeometry.NGeometry()
-	if err != nil {
-		return result, err
-	}
-	for inx := 0; inx < count; inx++ {
-		var geometry *geos.Geometry
-		geometry, err = newGeometry.Geometry(inx)
-		if err != nil {
-			return result, err
+	switch gt := input.(type) {
+	case geojson.Point:
+		geometry, err = geos.NewPoint(parseCoord(gt.Coordinates))
+	case geojson.LineString:
+		geometry, err = geos.NewLineString(parseCoordArray(gt.Coordinates)...)
+	case geojson.Polygon:
+		var coords []geos.Coord
+		var coordsArray [][]geos.Coord
+		for jnx := 0; jnx < len(gt.Coordinates); jnx++ {
+			coords = parseCoordArray(gt.Coordinates[jnx])
+			coordsArray = append(coordsArray, coords)
 		}
-		result = append(result, geometry)
+		geometry, err = geos.NewPolygon(coordsArray[0], coordsArray[1:]...)
+	case geojson.MultiPoint:
+		var points []*geos.Geometry
+		var point *geos.Geometry
+		for jnx := 0; jnx < len(gt.Coordinates); jnx++ {
+			point, err = geos.NewPoint(parseCoord(gt.Coordinates[jnx]))
+			points = append(points, point)
+		}
+		geometry, err = geos.NewCollection(geos.MULTIPOINT, points...)
+	case geojson.MultiLineString:
+		var lineStrings []*geos.Geometry
+		var lineString *geos.Geometry
+		for jnx := 0; jnx < len(gt.Coordinates); jnx++ {
+			lineString, err = geos.NewLineString(parseCoordArray(gt.Coordinates[jnx])...)
+			lineStrings = append(lineStrings, lineString)
+		}
+		geometry, err = geos.NewCollection(geos.MULTILINESTRING, lineStrings...)
+
+	case geojson.GeometryCollection:
+		log.Printf("Unimplemented GeometryCollection")
+	case geojson.MultiPolygon:
+		log.Printf("Unimplemented MultiPolygon")
+	case geojson.Feature:
+		return toGeos(gt.Geometry)
+	default:
+		log.Printf("unexpected type %T\n", gt)
 	}
-	return result, nil
+	return geometry, err
+}
+
+func fromGeos(input *geos.Geometry) (interface{}, error) {
+	var (
+		result interface{}
+		err    error
+		gType  geos.GeometryType
+		coords []geos.Coord
+	)
+	gType, err = input.Type()
+	if err == nil {
+		switch gType {
+		case geos.LINESTRING:
+			coords, err = input.Coords()
+			if err == nil {
+				var coordinates [][]float64
+				for inx := 0; inx < len(coords); inx++ {
+					arr := [...]float64{coords[inx].X, coords[inx].Y}
+					coordinates = append(coordinates, arr[:])
+				}
+				result = geojson.LineString{Type: geojson.LINESTRING, Coordinates: coordinates}
+			}
+		}
+	}
+	return result, err
+}
+func matchFeature(baselineFeature *geojson.Feature, detectedGeometries *geos.Geometry) error {
+	var (
+		err error
+		baselineGeometry,
+		currentGeometry *geos.Geometry
+		disjoint = true
+		count    int
+	)
+	baselineGeometry, err = toGeos(*baselineFeature)
+
+	if err == nil {
+		count, err = detectedGeometries.NGeometry()
+		for inx := 0; inx < count; inx++ {
+			currentGeometry, err = detectedGeometries.Geometry(inx)
+			if err != nil {
+				break
+			}
+			disjoint, err = baselineGeometry.Disjoint(currentGeometry)
+			if err != nil {
+				break
+			}
+			if !disjoint {
+				// Since we have already matched this geometry, we won't need to try to match it again
+				detectedGeometries, err = detectedGeometries.Difference(currentGeometry)
+				break
+			}
+		}
+	}
+	if err == nil {
+		if disjoint {
+			var undetected = make(map[string]interface{})
+			undetected[DETECTION] = "Undetected"
+			baselineFeature.Properties = undetected
+		} else {
+			var detected = make(map[string]interface{})
+			detected[DETECTION] = "Detected"
+			gc := geojson.GeometryCollection{Type: geojson.GEOMETRYCOLLECTION}
+			var (
+				newGeometry interface{}
+			)
+			newGeometry, err = fromGeos(currentGeometry)
+			if err == nil {
+				slice := [...]interface{}{baselineFeature.Geometry, newGeometry}
+				gc.Geometries = slice[:]
+				baselineFeature.Geometry = gc
+				baselineFeature.Properties = detected
+			}
+		}
+	}
+	return err
 }
