@@ -163,3 +163,67 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries *geos.Geo
 	}
 	return err
 }
+func linearRingFromLineString(input *geos.Geometry) (*geos.Geometry, error) {
+	var coords []geos.Coord
+	var result *geos.Geometry
+	var err error
+
+	coords, err = input.Coords()
+	if err == nil {
+		result, err = geos.NewLinearRing(coords[:]...)
+	}
+	return result, err
+}
+
+func mlsToMultiPolygon(input *geos.Geometry) (*geos.Geometry, error) {
+	var (
+		result     *geos.Geometry
+		err        error
+		innerRings []*geos.Geometry
+		// polygons   []*geos.Geometry
+		count      int
+		lineString *geos.Geometry
+		ring       *geos.Geometry
+		envelope   *geos.Geometry
+		polygon    *geos.Geometry
+		closed     bool
+	)
+	envelope, err = input.Envelope()
+	if err == nil {
+		count, err = input.NGeometry()
+		for inx := 0; inx < count; inx++ {
+			lineString, err = input.Geometry(inx)
+			if err != nil {
+				break
+			}
+			closed, err = lineString.IsClosed()
+			if err != nil {
+				break
+			}
+			if closed {
+				ring, err = linearRingFromLineString(lineString)
+				if err != nil {
+					break
+				}
+				innerRings = append(innerRings, ring)
+			}
+		}
+
+		// Associate the inner rings with the right polygon
+		if err == nil {
+			ring, err = envelope.Shell()
+			if err == nil {
+				polygon, err = geos.PolygonFromGeom(ring, innerRings[:]...)
+				// if err == nil {
+				// 	// Later we may have multiple outer shells and will have to deal with them separately
+				// 	polygons = append(polygons, polygon)
+				// 	log.Printf("%v\n", polygons)
+				// }
+			}
+		}
+	}
+	if err == nil {
+		result, err = geos.NewCollection(geos.MULTIPOLYGON, polygon)
+	}
+	return result, err
+}
