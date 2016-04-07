@@ -49,7 +49,7 @@ func qualitativeReview(detectedGeometries *geos.Geometry, baselineGeoJSONs geojs
 	// Try to match the geometry for each feature with what we detected
 	for inx := 0; inx < len(features); inx++ {
 		feature := features[inx]
-		matchFeature(&feature, detectedGeometries)
+		matchFeature(&feature, &detectedGeometries)
 		matchedFeatures = append(matchedFeatures, feature)
 	}
 
@@ -125,32 +125,9 @@ func quantitativeReview(detectedGeometries *geos.Geometry) error {
 		//   polygon, err = mpolygon.Geometry(inx)
 		//
 		// }
-		fmt.Printf("%#v\n", currentMetadata)
+		log.Printf("%#v\n", currentMetadata)
 	}
 	return err
-	// extents, err := detectedGeometries.Envelope()
-	// if err != nil {
-	// 	return err
-	// }
-	// polygon, err := geos.NewPolygon(extents, detectedGeometries...)
-	// baselineGeometry, err = mlsFromGeoJSON(baselineGeoJSON)
-	// if err != nil {
-	// 	return err
-	// }
-	// fmt.Printf("%v\n", baselineGeometry.String())
-	// baselineGeometry, err = baselineGeometry.Intersection(extents)
-	// if err != nil {
-	// 	return err
-	// }
-	// fmt.Printf("%v\n", baselineGeometry.String())
-	// outerRing, err = extents.Shell()
-	// if err != nil {
-	// 	return err
-	// }
-	// baselineGeometry, err = baselineGeometry.Union(outerRing)
-	// if err != nil {
-	// 	return err
-	// }
 }
 
 func mlsFromGeoJSON(input interface{}) (*geos.Geometry, error) {
@@ -226,36 +203,36 @@ func main() {
 		log.Printf("File read error: %v\n", err)
 		os.Exit(1)
 	}
-	// fc, found := baselineGeoJSON.(geojson.FeatureCollection)
-	// if found {
-	// qualitativeReview(detectedGeometries, fc)
-	err = quantitativeReview(detectedGeometries)
-	if err != nil {
-		log.Printf("Quantitative review failed: %v\n", err)
+	fc, found := baselineGeoJSON.(geojson.FeatureCollection)
+	if found {
+		qualitativeReview(detectedGeometries, fc)
+		err = quantitativeReview(detectedGeometries)
+		if err != nil {
+			log.Printf("Quantitative review failed: %v\n", err)
+			os.Exit(1)
+		}
+		baselineGeometries, err = mlsFromGeoJSON(baselineGeoJSON)
+		if err != nil {
+			log.Printf("Could not prepare baseline geometries for analysis: %v\n", err)
+			os.Exit(1)
+		}
+		detectedEnvelope, err = detectedGeometries.Envelope()
+		if err != nil {
+			log.Printf("Come on. Detected geometries have no envelope?!? %v\n", err)
+			os.Exit(1)
+		}
+		baselineGeometries, err = detectedEnvelope.Intersection(baselineGeometries)
+		if err != nil {
+			log.Printf("Failed to calculate intersection of baseline and detected features. %v\n", err)
+			os.Exit(1)
+		}
+		err = quantitativeReview(baselineGeometries)
+		if err != nil {
+			log.Printf("Quantitative review failed: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		log.Print("Baseline input must be a GeoJSON FeatureCollection.")
 		os.Exit(1)
 	}
-	baselineGeometries, err = mlsFromGeoJSON(baselineGeoJSON)
-	if err != nil {
-		log.Printf("Could not prepare baseline geometries for analysis: %v\n", err)
-		os.Exit(1)
-	}
-	detectedEnvelope, err = detectedGeometries.Envelope()
-	if err != nil {
-		log.Printf("Come on. Detected geometries have no envelope?!? %v\n", err)
-		os.Exit(1)
-	}
-	baselineGeometries, err = detectedEnvelope.Intersection(baselineGeometries)
-	if err != nil {
-		log.Printf("Failed to calculate intersection of baseline and detected features. %v\n", err)
-		os.Exit(1)
-	}
-	err = quantitativeReview(baselineGeometries)
-	if err != nil {
-		log.Printf("Quantitative review failed: %v\n", err)
-		os.Exit(1)
-	}
-	// } else {
-	// 	log.Print("Baseline input must be a GeoJSON FeatureCollection.")
-	// 	os.Exit(1)
-	// }
 }

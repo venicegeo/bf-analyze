@@ -112,7 +112,7 @@ func fromGeos(input *geos.Geometry) (interface{}, error) {
 	}
 	return result, err
 }
-func matchFeature(baselineFeature *geojson.Feature, detectedGeometries *geos.Geometry) error {
+func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Geometry) error {
 	var (
 		err error
 		baselineGeometry,
@@ -123,9 +123,9 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries *geos.Geo
 	baselineGeometry, err = toGeos(*baselineFeature)
 
 	if err == nil {
-		count, err = detectedGeometries.NGeometry()
+		count, err = (*detectedGeometries).NGeometry()
 		for inx := 0; inx < count; inx++ {
-			currentGeometry, err = detectedGeometries.Geometry(inx)
+			currentGeometry, err = (*detectedGeometries).Geometry(inx)
 			if err != nil {
 				break
 			}
@@ -135,7 +135,11 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries *geos.Geo
 			}
 			if !disjoint {
 				// Since we have already matched this geometry, we won't need to try to match it again
-				detectedGeometries, err = detectedGeometries.Difference(currentGeometry)
+				// Why doesn't this work?
+				var tc1 int
+				*detectedGeometries, err = (*detectedGeometries).Difference(currentGeometry)
+				tc1, _ = (*detectedGeometries).NGeometry()
+				log.Printf("O: %v; N: %v", count, tc1)
 				break
 			}
 		}
