@@ -85,85 +85,101 @@ func qualitativeReview(detectedGeometries *geos.Geometry, baselineGeoJSONs geojs
 }
 
 type polygonMetadata struct {
-	envelopeArea, totalArea float64
-	positive                bool
+	boundaryArea, totalArea float64
+	terminal                bool
+	link                    *polygonMetadata
+	index                   int
 }
 
 func quantitativeReview(detectedGeometries *geos.Geometry) error {
 	var (
-		err             error
-		polygon         *geos.Geometry
-		mpolygon        *geos.Geometry
-		envelope        *geos.Geometry
-		count           int
-		currentMetadata polygonMetadata
+		err                        error
+		polygon                    *geos.Geometry
+		polygon2                   *geos.Geometry
+		mpolygon                   *geos.Geometry
+		boundary                   *geos.Geometry
+		count                      int
+		touches                    bool
+		positiveArea, negativeArea float64
 	)
 
-	mpolygon, err = mlsToMultiPolygon(detectedGeometries)
+	mpolygon, err = mlsToMPoly(detectedGeometries)
 	if err != nil {
 		return err
 	}
 	count, err = mpolygon.NGeometry()
+	var polygonMetadatas = make([]polygonMetadata, count)
+
 	for inx := 0; inx < count; inx++ {
+		polygonMetadatas[inx].index = inx
 		polygon, err = mpolygon.Geometry(inx)
 		if err != nil {
-			break
+			return err
 		}
-		envelope, err = polygon.Envelope()
+		// We need two areas for each component polygon
+		// The total area (which considers holes)
+		polygonMetadatas[inx].totalArea, err = polygon.Area()
 		if err != nil {
-			break
+			return err
 		}
-		currentMetadata.totalArea, err = polygon.Area()
+		// The shell (boundary)
+		boundary, err = polygon.Shell()
 		if err != nil {
-			break
+			return err
 		}
-		currentMetadata.envelopeArea, err = envelope.Area()
+		boundary, err = geos.PolygonFromGeom(boundary)
 		if err != nil {
-			break
+			return err
 		}
-		// for jnx := 0; jnx < count; jnx++ {
-		//   polygon, err = mpolygon.Geometry(inx)
-		//
-		// }
-		log.Printf("%#v\n", currentMetadata)
+		polygonMetadatas[inx].boundaryArea, err = boundary.Area()
+		if err != nil {
+			return err
+		}
+
+		// Construct an ordered acyclical graph of spaces,
+		// with the first polygon being the terminal node
+		if inx == 0 {
+			polygonMetadatas[inx].terminal = true
+		}
+		// Iterate through all of the polygons
+		for jnx := 1; jnx < count; jnx++ {
+			// If a polygon is not already linked
+			if (inx == jnx) || (polygonMetadatas[jnx].link != nil) {
+				continue
+			}
+			polygon2, err = mpolygon.Geometry(jnx)
+			if err != nil {
+				return err
+			}
+			touches, err = polygon2.Touches(polygon)
+			if err != nil {
+				return err
+			}
+			// And it touches the current polygon, register the link
+			if touches {
+				polygonMetadatas[jnx].link = &(polygonMetadatas[inx])
+			}
+		}
 	}
+	for inx := 0; inx < count; inx++ {
+		counter := 0
+		// Count the steps to get from the current polygon to the terminal one
+		// to determine its polarity
+		for current := inx; !polygonMetadatas[current].terminal; {
+			current = polygonMetadatas[current].link.index
+			counter++
+		}
+		switch counter % 2 {
+		case 0:
+			positiveArea += polygonMetadatas[inx].totalArea
+			negativeArea += polygonMetadatas[inx].boundaryArea - polygonMetadatas[inx].totalArea
+		case 1:
+			negativeArea += polygonMetadatas[inx].totalArea
+			positiveArea += polygonMetadatas[inx].boundaryArea - polygonMetadatas[inx].totalArea
+		}
+	}
+	log.Printf("+:%v -:%v Sum: %v Total:%v\n", positiveArea, negativeArea, positiveArea-negativeArea, positiveArea+negativeArea)
 	return err
-}
-
-func mlsFromGeoJSON(input interface{}) (*geos.Geometry, error) {
-	var (
-		geometry *geos.Geometry
-		err      error
-	)
-
-	result, err := geos.NewCollection(geos.MULTILINESTRING)
-
-	// Pluck the geometries into an array
-	detectedGJGeometries := geojson.ToGeometryArray(input)
-
-	for inx := 0; inx < len(detectedGJGeometries); inx++ {
-		// Transform the GeoJSON to a GEOS Geometry
-		geometry, err = toGeos(detectedGJGeometries[inx])
-		if err == nil {
-			// If we get a polygon, we really just want its outer ring for now
-			ttype, _ := geometry.Type()
-			if ttype == geos.POLYGON {
-				geometry, err = geometry.Shell()
-			}
-			if err == nil {
-				result, err = result.Union(geometry)
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-
-	if err == nil {
-		// Join the geometries when possible
-		result, err = result.LineMerge()
-	}
-	return result, err
 }
 
 func main() {
@@ -185,7 +201,7 @@ func main() {
 		filenameB = "test/baseline.geojson"
 	}
 
-	// Retrieve the detected features as GeoJSON
+	// Retrieve the detected features as a GeoJSON MultiLineString
 	detectedGeoJSON, err = parseGeoJSONFile(filename)
 	if err != nil {
 		log.Printf("File read error: %v\n", err)
@@ -197,42 +213,49 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Retrieve the baseline features as GeoJSON
+	// Retrieve the baseline features as a GeoJSON MultiLineString
 	baselineGeoJSON, err = parseGeoJSONFile(filenameB)
 	if err != nil {
 		log.Printf("File read error: %v\n", err)
 		os.Exit(1)
 	}
+	baselineGeometries, err = mlsFromGeoJSON(baselineGeoJSON)
+	if err != nil {
+		log.Printf("Could not prepare baseline geometries for analysis: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Clip the baseline features with the envelope of the detected features
+	detectedEnvelope, err = detectedGeometries.Envelope()
+	if err != nil {
+		log.Printf("Come on. Detected geometries have no envelope?!? %v\n", err)
+		os.Exit(1)
+	}
+	baselineGeometries, err = detectedEnvelope.Intersection(baselineGeometries)
+	if err != nil {
+		log.Printf("Failed to calculate intersection of baseline and detected features. %v\n", err)
+		os.Exit(1)
+	}
+
+	// Qualitative Review: What features match, are new, or are missing
 	fc, found := baselineGeoJSON.(geojson.FeatureCollection)
 	if found {
 		qualitativeReview(detectedGeometries, fc)
-		err = quantitativeReview(detectedGeometries)
-		if err != nil {
-			log.Printf("Quantitative review failed: %v\n", err)
-			os.Exit(1)
-		}
-		baselineGeometries, err = mlsFromGeoJSON(baselineGeoJSON)
-		if err != nil {
-			log.Printf("Could not prepare baseline geometries for analysis: %v\n", err)
-			os.Exit(1)
-		}
-		detectedEnvelope, err = detectedGeometries.Envelope()
-		if err != nil {
-			log.Printf("Come on. Detected geometries have no envelope?!? %v\n", err)
-			os.Exit(1)
-		}
-		baselineGeometries, err = detectedEnvelope.Intersection(baselineGeometries)
-		if err != nil {
-			log.Printf("Failed to calculate intersection of baseline and detected features. %v\n", err)
-			os.Exit(1)
-		}
-		err = quantitativeReview(baselineGeometries)
-		if err != nil {
-			log.Printf("Quantitative review failed: %v\n", err)
-			os.Exit(1)
-		}
 	} else {
 		log.Print("Baseline input must be a GeoJSON FeatureCollection.")
+		os.Exit(1)
+	}
+
+	// Quantitative Review: what is the land/water area for the two
+	err = quantitativeReview(detectedGeometries)
+	if err != nil {
+		log.Printf("Quantitative review failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	err = quantitativeReview(baselineGeometries)
+	if err != nil {
+		log.Printf("Quantitative review failed: %v\n", err)
 		os.Exit(1)
 	}
 }

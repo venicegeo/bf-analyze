@@ -17,7 +17,11 @@ limitations under the License.
 package main
 
 import (
-	"log"
+	"errors"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"os/exec"
 
 	"github.com/paulsmith/gogeos/geos"
 	"github.com/venicegeo/geojson-go/geojson"
@@ -40,6 +44,7 @@ func parseCoordArray(input [][]float64) []geos.Coord {
 	return result
 }
 
+// toGeos takes a GeoJSON object and returns a GEOS geometry
 func toGeos(input interface{}) (*geos.Geometry, error) {
 	var (
 		geometry *geos.Geometry
@@ -77,17 +82,18 @@ func toGeos(input interface{}) (*geos.Geometry, error) {
 		geometry, err = geos.NewCollection(geos.MULTILINESTRING, lineStrings...)
 
 	case geojson.GeometryCollection:
-		log.Printf("Unimplemented GeometryCollection")
+		err = errors.New("Unimplemented GeometryCollection")
 	case geojson.MultiPolygon:
-		log.Printf("Unimplemented MultiPolygon")
+		err = errors.New("Unimplemented MultiPolygon")
 	case geojson.Feature:
 		return toGeos(gt.Geometry)
 	default:
-		log.Printf("unexpected type %T\n", gt)
+		err = fmt.Errorf("Unexpected type %T\n", gt)
 	}
 	return geometry, err
 }
 
+// fromGeos takes a GEOS geometry and returns a GeoJSON object
 func fromGeos(input *geos.Geometry) (interface{}, error) {
 	var (
 		result interface{}
@@ -108,10 +114,16 @@ func fromGeos(input *geos.Geometry) (interface{}, error) {
 				}
 				result = geojson.LineString{Type: geojson.LINESTRING, Coordinates: coordinates}
 			}
+		default:
+			err = fmt.Errorf("Unimplemented %T", gType)
 		}
+
 	}
 	return result, err
 }
+
+// matchFeature looks for geometries that match the given feature
+// If a match is found, the feature is updated and the geometry is removed from the input collection
 func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Geometry) error {
 	var (
 		err error
@@ -135,11 +147,7 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 			}
 			if !disjoint {
 				// Since we have already matched this geometry, we won't need to try to match it again
-				// Why doesn't this work?
-				var tc1 int
 				*detectedGeometries, err = (*detectedGeometries).Difference(currentGeometry)
-				tc1, _ = (*detectedGeometries).NGeometry()
-				log.Printf("O: %v; N: %v", count, tc1)
 				break
 			}
 		}
@@ -178,13 +186,103 @@ func linearRingFromLineString(input *geos.Geometry) (*geos.Geometry, error) {
 	}
 	return result, err
 }
+func lineStringFromLinearRing(input *geos.Geometry) (*geos.Geometry, error) {
+	var coords []geos.Coord
+	var result *geos.Geometry
+	var err error
 
-func mlsToMultiPolygon(input *geos.Geometry) (*geos.Geometry, error) {
+	coords, err = input.Coords()
+	if err == nil {
+		result, err = geos.NewLineString(coords[:]...)
+	}
+	return result, err
+}
+
+// mlsFromGeoJSON creates a MultiLineString from the input and joins
+// individual LineStrings together
+// Unused at the moment
+func mlsFromGeoJSON(input interface{}) (*geos.Geometry, error) {
+	var (
+		geometry *geos.Geometry
+		err      error
+	)
+
+	result, err := geos.NewCollection(geos.MULTILINESTRING)
+
+	// Pluck the geometries into an array
+	detectedGJGeometries := geojson.ToGeometryArray(input)
+
+	for inx := 0; inx < len(detectedGJGeometries); inx++ {
+		// Transform the GeoJSON to a GEOS Geometry
+		geometry, err = toGeos(detectedGJGeometries[inx])
+		if err == nil {
+			// If we get a polygon, we really just want its outer ring for now
+			ttype, _ := geometry.Type()
+			if ttype == geos.POLYGON {
+				geometry, err = geometry.Shell()
+			}
+			if err == nil {
+				result, err = result.Union(geometry)
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	if err == nil {
+		// Join the geometries when possible
+		result, err = result.LineMerge()
+	}
+	return result, err
+}
+
+// multiPolygonize turns a slice of LineStrings into a MultiPolygon
+func multiPolygonize(input []*geos.Geometry) (*geos.Geometry, error) {
+	var (
+		result         *geos.Geometry
+		mls            *geos.Geometry
+		err            error
+		geometryString string
+		file           *os.File
+	)
+
+	// Take the input, turn it into a MultiLineString so we can pass it to C++-land
+	mls, err = geos.NewCollection(geos.MULTILINESTRING, input[:]...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Write the MLS to a temp file
+	geometryString, err = mls.ToWKT()
+	file, err = ioutil.TempFile("", "mls")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(file.Name())
+
+	file.Write([]byte(geometryString))
+
+	// Call our other application, which returns WKT
+	cmd := exec.Command("/Users/JeffYutzler/projects/venicegeo/bf-line-analyzer/bld/bf_la", "-mlp", file.Name())
+	bytes, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	result, err = geos.FromWKT(string(bytes))
+
+	return result, err
+}
+
+// mlsToMPoly takes a MultiLineString and turns it into a MultiPolygon
+// This includes handling all of the interior (inner) rings
+func mlsToMPoly(input *geos.Geometry) (*geos.Geometry, error) {
 	var (
 		result     *geos.Geometry
 		err        error
-		innerRings []*geos.Geometry
-		// polygons   []*geos.Geometry
+		rings      []*geos.Geometry
+		chords     []*geos.Geometry
+		polygons   []*geos.Geometry
 		count      int
 		lineString *geos.Geometry
 		ring       *geos.Geometry
@@ -192,42 +290,91 @@ func mlsToMultiPolygon(input *geos.Geometry) (*geos.Geometry, error) {
 		polygon    *geos.Geometry
 		closed     bool
 	)
-	envelope, err = input.Envelope()
-	if err == nil {
-		count, err = input.NGeometry()
-		for inx := 0; inx < count; inx++ {
-			lineString, err = input.Geometry(inx)
-			if err != nil {
-				break
-			}
-			closed, err = lineString.IsClosed()
-			if err != nil {
-				break
-			}
-			if closed {
-				ring, err = linearRingFromLineString(lineString)
-				if err != nil {
-					break
-				}
-				innerRings = append(innerRings, ring)
-			}
-		}
 
-		// Associate the inner rings with the right polygon
-		if err == nil {
-			ring, err = envelope.Shell()
-			if err == nil {
-				polygon, err = geos.PolygonFromGeom(ring, innerRings[:]...)
-				// if err == nil {
-				// 	// Later we may have multiple outer shells and will have to deal with them separately
-				// 	polygons = append(polygons, polygon)
-				// 	log.Printf("%v\n", polygons)
-				// }
+	// Create two bins, one of rings and one of chords
+	// The envelope itself is the first chord
+	envelope, err = input.Envelope()
+	if err != nil {
+		return nil, err
+	}
+	ring, err = envelope.Shell()
+	if err != nil {
+		return nil, err
+	}
+	lineString, err = lineStringFromLinearRing(ring)
+	if err != nil {
+		return nil, err
+	}
+	chords = append(chords, lineString)
+
+	count, err = input.NGeometry()
+	for inx := 0; inx < count; inx++ {
+		lineString, err = input.Geometry(inx)
+		if err != nil {
+			return nil, err
+		}
+		closed, err = lineString.IsClosed()
+		if err != nil {
+			return nil, err
+		}
+		if closed {
+			ring, err = linearRingFromLineString(lineString)
+			if err != nil {
+				return nil, err
 			}
+			rings = append(rings, ring)
+		} else {
+			chords = append(chords, lineString)
 		}
 	}
-	if err == nil {
-		result, err = geos.NewCollection(geos.MULTIPOLYGON, polygon)
+
+	// Create a MultiPolygon covering the AOI
+	if len(chords) > 1 {
+		result, err = multiPolygonize(chords)
+	} else {
+		result, err = geos.NewCollection(geos.MULTIPOLYGON, envelope)
 	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Make a new bag of polygons,
+	// associating the detected rings with the right polygon
+	count, err = result.NGeometry()
+	if err != nil {
+		return nil, err
+	}
+	for inx := 0; inx < count; inx++ {
+		var (
+			innerRings []*geos.Geometry
+			contains   bool
+		)
+		polygon, err = result.Geometry(inx)
+		if err != nil {
+			return nil, err
+		}
+		for jnx := 0; jnx < len(rings); jnx++ {
+			contains, err = polygon.Contains(rings[jnx])
+			if err != nil {
+				return nil, err
+			}
+			if contains {
+				innerRings = append(innerRings, rings[jnx])
+			}
+		}
+		ring, err = polygon.Shell()
+		if err != nil {
+			return nil, err
+		}
+		polygon, err = geos.PolygonFromGeom(ring, innerRings[:]...)
+		if err != nil {
+			return nil, err
+		}
+		polygons = append(polygons, polygon)
+	}
+
+	// Reconstruct the MultiPolygon
+	result, err = geos.NewCollection(geos.MULTIPOLYGON, polygons[:]...)
+
 	return result, err
 }
