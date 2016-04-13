@@ -126,14 +126,35 @@ func linearRingFromLineString(input *geos.Geometry) (*geos.Geometry, error) {
 	}
 	return result, err
 }
-func lineStringFromLinearRing(input *geos.Geometry) (*geos.Geometry, error) {
-	var coords []geos.Coord
-	var result *geos.Geometry
-	var err error
+func lineStringFromGeometry(input *geos.Geometry) (*geos.Geometry, error) {
+	var (
+		coords       []geos.Coord
+		result       *geos.Geometry
+		err          error
+		geometryType geos.GeometryType
+	)
 
-	coords, err = input.Coords()
-	if err == nil {
-		result, err = geos.NewLineString(coords[:]...)
+	geometryType, err = input.Type()
+	if err != nil {
+		return result, err
+	}
+	switch geometryType {
+	case geos.LINESTRING:
+		result = input
+	case geos.LINEARRING:
+		coords, err = input.Coords()
+		if err == nil {
+			result, err = geos.NewLineString(coords[:]...)
+		}
+	case geos.POLYGON:
+		var shell *geos.Geometry
+		shell, err = input.Shell()
+		if err == nil {
+			// Reenter
+			result, err = lineStringFromGeometry(shell)
+		}
+	default:
+		err = fmt.Errorf("Cannot create a line string from type %v.", geometryType)
 	}
 	return result, err
 }
@@ -202,7 +223,7 @@ func mlsToMPoly(input *geos.Geometry) (*geos.Geometry, error) {
 	if err != nil {
 		return nil, err
 	}
-	lineString, err = lineStringFromLinearRing(ring)
+	lineString, err = lineStringFromGeometry(ring)
 	if err != nil {
 		return nil, err
 	}

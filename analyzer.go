@@ -44,16 +44,22 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 		err error
 		baselineGeometry,
 		detectedGeometry *geos.Geometry
-		disjoint     = true
-		count        int
-		baselineType geos.GeometryType
-		detectedType geos.GeometryType
+		disjoint       bool
+		count          int
+		baselineClosed bool
+		detectedClosed bool
 	)
+	// Go from GeoJSON to GEOS
 	baselineGeometry, err = toGeos(*baselineFeature)
 	if err != nil {
 		return err
 	}
-	baselineType, err = baselineGeometry.Type()
+	// And from GEOS to a GEOS LineString
+	baselineGeometry, err = lineStringFromGeometry(baselineGeometry)
+	if err != nil {
+		return err
+	}
+	baselineClosed, err = baselineGeometry.IsClosed()
 	if err != nil {
 		return err
 	}
@@ -64,12 +70,12 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 			return err
 		}
 
-		// To be a match they must have the same geometry type...
-		detectedType, err = detectedGeometry.Type()
+		// To be a match they must both have the same closedness...
+		detectedClosed, err = detectedGeometry.IsClosed()
 		if err != nil {
 			return err
 		}
-		if baselineType != detectedType {
+		if baselineClosed != detectedClosed {
 			continue
 		}
 
