@@ -27,12 +27,6 @@ import (
 	"github.com/venicegeo/geojson-go/geojson"
 )
 
-const (
-	// DETECTION is the key for the GeoJSON object to indicate whether a shoreline
-	// was previously detected
-	DETECTION = "detection"
-)
-
 func parseCoord(input []float64) geos.Coord {
 	return geos.NewCoord(input[0], input[1])
 }
@@ -121,60 +115,6 @@ func fromGeos(input *geos.Geometry) (interface{}, error) {
 	}
 	return result, err
 }
-
-// matchFeature looks for geometries that match the given feature
-// If a match is found, the feature is updated and the geometry is removed from the input collection
-func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Geometry) error {
-	var (
-		err error
-		baselineGeometry,
-		currentGeometry *geos.Geometry
-		disjoint = true
-		count    int
-	)
-	baselineGeometry, err = toGeos(*baselineFeature)
-
-	if err == nil {
-		count, err = (*detectedGeometries).NGeometry()
-		for inx := 0; inx < count; inx++ {
-			currentGeometry, err = (*detectedGeometries).Geometry(inx)
-			if err != nil {
-				break
-			}
-			disjoint, err = baselineGeometry.Disjoint(currentGeometry)
-			if err != nil {
-				break
-			}
-			if !disjoint {
-				// Since we have already matched this geometry, we won't need to try to match it again
-				*detectedGeometries, err = (*detectedGeometries).Difference(currentGeometry)
-				break
-			}
-		}
-	}
-	if err == nil {
-		if disjoint {
-			var undetected = make(map[string]interface{})
-			undetected[DETECTION] = "Undetected"
-			baselineFeature.Properties = undetected
-		} else {
-			var detected = make(map[string]interface{})
-			detected[DETECTION] = "Detected"
-			gc := geojson.GeometryCollection{Type: geojson.GEOMETRYCOLLECTION}
-			var (
-				newGeometry interface{}
-			)
-			newGeometry, err = fromGeos(currentGeometry)
-			if err == nil {
-				slice := [...]interface{}{baselineFeature.Geometry, newGeometry}
-				gc.Geometries = slice[:]
-				baselineFeature.Geometry = gc
-				baselineFeature.Properties = detected
-			}
-		}
-	}
-	return err
-}
 func linearRingFromLineString(input *geos.Geometry) (*geos.Geometry, error) {
 	var coords []geos.Coord
 	var result *geos.Geometry
@@ -194,45 +134,6 @@ func lineStringFromLinearRing(input *geos.Geometry) (*geos.Geometry, error) {
 	coords, err = input.Coords()
 	if err == nil {
 		result, err = geos.NewLineString(coords[:]...)
-	}
-	return result, err
-}
-
-// mlsFromGeoJSON creates a MultiLineString from the input and joins
-// individual LineStrings together
-// Unused at the moment
-func mlsFromGeoJSON(input interface{}) (*geos.Geometry, error) {
-	var (
-		geometry *geos.Geometry
-		err      error
-	)
-
-	result, err := geos.NewCollection(geos.MULTILINESTRING)
-
-	// Pluck the geometries into an array
-	detectedGJGeometries := geojson.ToGeometryArray(input)
-
-	for inx := 0; inx < len(detectedGJGeometries); inx++ {
-		// Transform the GeoJSON to a GEOS Geometry
-		geometry, err = toGeos(detectedGJGeometries[inx])
-		if err == nil {
-			// If we get a polygon, we really just want its outer ring for now
-			ttype, _ := geometry.Type()
-			if ttype == geos.POLYGON {
-				geometry, err = geometry.Shell()
-			}
-			if err == nil {
-				result, err = result.Union(geometry)
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-
-	if err == nil {
-		// Join the geometries when possible
-		result, err = result.LineMerge()
 	}
 	return result, err
 }
@@ -377,4 +278,39 @@ func mlsToMPoly(input *geos.Geometry) (*geos.Geometry, error) {
 	result, err = geos.NewCollection(geos.MULTIPOLYGON, polygons[:]...)
 
 	return result, err
+}
+
+func lineStringVariance(first, second *geos.Geometry) (float64, error) {
+	var (
+		err          error
+		coords       []geos.Coord
+		total        = float64(0)
+		distance     float64
+		point        *geos.Geometry
+		geometryType geos.GeometryType
+	)
+
+	geometryType, err = first.Type()
+	switch geometryType {
+	case geos.LINESTRING:
+		coords, err = first.Coords()
+	case geos.POLYGON:
+		first, _ = first.Shell()
+		coords, err = first.Coords()
+	}
+	if err != nil {
+		return 0, err
+	}
+	for inx := range coords {
+		point, err = geos.NewPoint(coords[inx])
+		if err != nil {
+			return 0, err
+		}
+		distance, err = point.Distance(second)
+		if err != nil {
+			return 0, err
+		}
+		total += distance
+	}
+	return total / float64(len(coords)), err
 }
