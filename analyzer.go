@@ -43,59 +43,81 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 	var (
 		err error
 		baselineGeometry,
-		currentGeometry *geos.Geometry
-		disjoint = true
-		count    int
+		detectedGeometry *geos.Geometry
+		disjoint     = true
+		count        int
+		baselineType geos.GeometryType
+		detectedType geos.GeometryType
 	)
 	baselineGeometry, err = toGeos(*baselineFeature)
-
-	if err == nil {
-		count, err = (*detectedGeometries).NGeometry()
-		for inx := 0; inx < count; inx++ {
-			currentGeometry, err = (*detectedGeometries).Geometry(inx)
-			if err != nil {
-				break
-			}
-			disjoint, err = baselineGeometry.Disjoint(currentGeometry)
-			if err != nil {
-				break
-			}
-			if !disjoint {
-				// Since we have already matched this geometry, we won't need to try to match it again
-				*detectedGeometries, err = (*detectedGeometries).Difference(currentGeometry)
-				break
-			}
-		}
+	if err != nil {
+		return err
 	}
-	if err == nil {
-		if disjoint {
-			var undetected = make(map[string]interface{})
-			undetected[DETECTION] = "Undetected"
-			baselineFeature.Properties = undetected
-		} else {
-			var detected = make(map[string]interface{})
-			detected[DETECTION] = "Detected"
-			detected[DETECTEDVARIANCE], err = lineStringVariance(currentGeometry, baselineGeometry)
-			if err != nil {
-				return err
-			}
-			detected[BASELINEVARIANCE], err = lineStringVariance(baselineGeometry, currentGeometry)
-			if err != nil {
-				return err
-			}
-			gc := geojson.GeometryCollection{Type: geojson.GEOMETRYCOLLECTION}
+	baselineType, err = baselineGeometry.Type()
+	if err != nil {
+		return err
+	}
+	count, err = (*detectedGeometries).NGeometry()
+	for inx := 0; inx < count; inx++ {
+		detectedGeometry, err = (*detectedGeometries).Geometry(inx)
+		if err != nil {
+			return err
+		}
+
+		// To be a match they must have the same geometry type...
+		detectedType, err = detectedGeometry.Type()
+		if err != nil {
+			return err
+		}
+		if baselineType != detectedType {
+			continue
+		}
+
+		// And somehow overlap each other (not be disjoint)...
+		disjoint, err = baselineGeometry.Disjoint(detectedGeometry)
+		if err != nil {
+			return err
+		}
+
+		if !disjoint {
+			// Now that we have a match
+			// Add some metadata regarding the match
 			var (
 				newGeometry interface{}
+				detected    = make(map[string]interface{})
 			)
-			newGeometry, err = fromGeos(currentGeometry)
-			if err == nil {
-				slice := [...]interface{}{baselineFeature.Geometry, newGeometry}
-				gc.Geometries = slice[:]
-				baselineFeature.Geometry = gc
-				baselineFeature.Properties = detected
+			detected[DETECTION] = "Detected"
+			detected[DETECTEDVARIANCE], err = lineStringVariance(detectedGeometry, baselineGeometry)
+			if err != nil {
+				return err
 			}
+			detected[BASELINEVARIANCE], err = lineStringVariance(baselineGeometry, detectedGeometry)
+			if err != nil {
+				return err
+			}
+
+			// And replace the geometry with a GeometryCollection [baseline, detected]
+			gc := geojson.GeometryCollection{Type: geojson.GEOMETRYCOLLECTION}
+			newGeometry, err = fromGeos(detectedGeometry)
+			if err != nil {
+				return err
+			}
+			slice := [...]interface{}{baselineFeature.Geometry, newGeometry}
+			gc.Geometries = slice[:]
+			baselineFeature.Geometry = gc
+			baselineFeature.Properties = detected
+
+			// Since we have already found a match for this geometry
+			// we won't need to try to match it again later so remove it from the list
+			*detectedGeometries, err = (*detectedGeometries).Difference(detectedGeometry)
+			return err
 		}
 	}
+
+	// If we got here, there was no match
+	var undetected = make(map[string]interface{})
+	undetected[DETECTION] = "Undetected"
+	baselineFeature.Properties = undetected
 	return err
 }
 func qualitativeReview(detected Scene, baseline Scene) error {
