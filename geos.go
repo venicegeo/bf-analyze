@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/montanaflynn/stats"
 	"github.com/paulsmith/gogeos/geos"
 	"github.com/venicegeo/geojson-go/geojson"
 )
@@ -301,11 +302,11 @@ func mlsToMPoly(input *geos.Geometry) (*geos.Geometry, error) {
 	return result, err
 }
 
-func lineStringVariance(first, second *geos.Geometry) (float64, error) {
+func lineStringsToFloat64Data(first, second *geos.Geometry) (stats.Float64Data, error) {
 	var (
 		err          error
 		coords       []geos.Coord
-		total        = float64(0)
+		data         []float64
 		distance     float64
 		point        *geos.Geometry
 		geometryType geos.GeometryType
@@ -320,18 +321,19 @@ func lineStringVariance(first, second *geos.Geometry) (float64, error) {
 		coords, err = first.Coords()
 	}
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+	data = make([]float64, len(coords))
 	for inx := range coords {
 		point, err = geos.NewPoint(coords[inx])
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		distance, err = point.Distance(second)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
-		total += distance
+		data[inx] = distance
 	}
-	return total / float64(len(coords)), err
+	return stats.LoadRawData(data), err
 }

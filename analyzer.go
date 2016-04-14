@@ -21,20 +21,21 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/montanaflynn/stats"
 	"github.com/paulsmith/gogeos/geos"
 	"github.com/venicegeo/geojson-go/geojson"
 )
 
 const (
-	// DETECTION is the key for the GeoJSON object to indicate whether a shoreline
+	// DETECTION is the key for the GeoJSON property indicating whether a shoreline
 	// was previously detected
 	DETECTION = "detection"
-	// DETECTEDVARIANCE is the key for the GeoJSON object indicating the variance
-	// between the detected and baseline points
-	DETECTEDVARIANCE = "detected_variance"
-	// BASELINEVARIANCE is the key for the GeoJSON object indicating the variance
-	// between the baseline and detected points
-	BASELINEVARIANCE = "baseline_variance"
+	// DETECTEDSTATS is the key for the GeoJSON property indicating the variance
+	// between the detected points and baseline linestring
+	DETECTEDSTATS = "detected_stats"
+	// BASELINESTATS is the key for the GeoJSON property indicating the variance
+	// between the baseline points and detected linestring
+	BASELINESTATS = "baseline_stats"
 )
 
 // matchFeature looks for geometries that match the given feature
@@ -91,14 +92,19 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 			var (
 				newGeometry interface{}
 				detected    = make(map[string]interface{})
+				data        stats.Float64Data
 			)
 			detected[DETECTION] = "Detected"
-			detected[DETECTEDVARIANCE], err = lineStringVariance(detectedGeometry, baselineGeometry)
-			if err != nil {
+			if data, err = lineStringsToFloat64Data(detectedGeometry, baselineGeometry); err != nil {
 				return err
 			}
-			detected[BASELINEVARIANCE], err = lineStringVariance(baselineGeometry, detectedGeometry)
-			if err != nil {
+			if detected[DETECTEDSTATS], err = populateStatistics(data); err != nil {
+				return err
+			}
+			if data, err = lineStringsToFloat64Data(baselineGeometry, detectedGeometry); err != nil {
+				return err
+			}
+			if detected[BASELINESTATS], err = populateStatistics(data); err != nil {
 				return err
 			}
 
@@ -191,6 +197,18 @@ type polygonMetadata struct {
 	terminal                bool
 	link                    *polygonMetadata
 	index                   int
+}
+
+func populateStatistics(input stats.Float64Data) (map[string]interface{}, error) {
+	var (
+		result = make(map[string]interface{})
+		err    error
+	)
+	if result["mean"], err = input.Mean(); err != nil {
+		return result, err
+	}
+	result["median"], err = input.Median()
+	return result, err
 }
 
 func quantitativeReview(scene Scene, envelope *geos.Geometry) error {
