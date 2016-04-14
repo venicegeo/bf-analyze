@@ -118,14 +118,12 @@ func fromGeos(input *geos.Geometry) (interface{}, error) {
 }
 func linearRingFromLineString(input *geos.Geometry) (*geos.Geometry, error) {
 	var coords []geos.Coord
-	var result *geos.Geometry
 	var err error
 
-	coords, err = input.Coords()
-	if err == nil {
-		result, err = geos.NewLinearRing(coords[:]...)
+	if coords, err = input.Coords(); err != nil {
+		return nil, err
 	}
-	return result, err
+	return geos.NewLinearRing(coords[:]...)
 }
 func lineStringFromGeometry(input *geos.Geometry) (*geos.Geometry, error) {
 	var (
@@ -135,25 +133,22 @@ func lineStringFromGeometry(input *geos.Geometry) (*geos.Geometry, error) {
 		geometryType geos.GeometryType
 	)
 
-	geometryType, err = input.Type()
-	if err != nil {
+	if geometryType, err = input.Type(); err != nil {
 		return result, err
 	}
 	switch geometryType {
 	case geos.LINESTRING:
 		result = input
 	case geos.LINEARRING:
-		coords, err = input.Coords()
-		if err == nil {
-			result, err = geos.NewLineString(coords[:]...)
-		}
+		coords, _ = input.Coords()
+		result, _ = geos.NewLineString(coords[:]...)
 	case geos.POLYGON:
 		var shell *geos.Geometry
-		shell, err = input.Shell()
-		if err == nil {
-			// Reenter
-			result, err = lineStringFromGeometry(shell)
+		if shell, err = input.Shell(); err != nil {
+			return nil, err
 		}
+		// Reenter
+		result, err = lineStringFromGeometry(shell)
 	default:
 		err = fmt.Errorf("Cannot create a line string from type %v.", geometryType)
 	}
@@ -304,33 +299,23 @@ func mlsToMPoly(input *geos.Geometry) (*geos.Geometry, error) {
 
 func lineStringsToFloat64Data(first, second *geos.Geometry) (stats.Float64Data, error) {
 	var (
-		err          error
-		coords       []geos.Coord
-		data         []float64
-		distance     float64
-		point        *geos.Geometry
-		geometryType geos.GeometryType
+		err      error
+		coords   []geos.Coord
+		data     []float64
+		distance float64
+		point    *geos.Geometry
 	)
 
-	geometryType, err = first.Type()
-	switch geometryType {
-	case geos.LINESTRING:
-		coords, err = first.Coords()
-	case geos.POLYGON:
-		first, _ = first.Shell()
-		coords, err = first.Coords()
-	}
-	if err != nil {
+	if first, err = lineStringFromGeometry(first); err != nil {
 		return nil, err
 	}
+	coords, _ = first.Coords()
 	data = make([]float64, len(coords))
 	for inx := range coords {
-		point, err = geos.NewPoint(coords[inx])
-		if err != nil {
+		if point, err = geos.NewPoint(coords[inx]); err != nil {
 			return nil, err
 		}
-		distance, err = point.Distance(second)
-		if err != nil {
+		if distance, err = point.Distance(second); err != nil {
 			return nil, err
 		}
 		data[inx] = distance

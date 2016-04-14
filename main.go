@@ -40,46 +40,39 @@ func main() {
 	}
 
 	// Retrieve the detected features as a GeoJSON MultiLineString
-	detected, err = parseGeoJSONFile(filename)
-	if err != nil {
+	if detected, err = parseGeoJSONFile(filename); err != nil {
 		log.Printf("File read error: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Retrieve the baseline features as a GeoJSON MultiLineString
-	baseline, err = parseGeoJSONFile(filenameB)
-	if err != nil {
+	if baseline, err = parseGeoJSONFile(filenameB); err != nil {
 		log.Printf("File read error: %v\n", err)
 		os.Exit(1)
 	}
 
-	err = baseline.clip(detected)
-	if err != nil {
+	if err = baseline.clip(detected); err != nil {
 		log.Printf("Could not clip baseline: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Qualitative Review: What features match, are new, or are missing
-	err = qualitativeReview(detected, baseline)
-	if err != nil {
+	if err = qualitativeReview(detected, baseline); err != nil {
 		log.Printf("Qualitative Review failed: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Quantitative Review: what is the land/water area for the two
-	detectedEnvelope, err = detected.envelope()
-	if err != nil {
+	if detectedEnvelope, err = detected.envelope(); err != nil {
 		log.Printf("Could not retrieve envelope: %v\n", err)
 		os.Exit(1)
 	}
-	err = quantitativeReview(baseline, detectedEnvelope)
-	if err != nil {
+	if err = quantitativeReview(baseline, detectedEnvelope); err != nil {
 		log.Printf("Quantitative review failed: %v\n", err)
 		os.Exit(1)
 	}
 
-	err = quantitativeReview(detected, detectedEnvelope)
-	if err != nil {
+	if err = quantitativeReview(detected, detectedEnvelope); err != nil {
 		log.Printf("Quantitative review failed: %v\n", err)
 		os.Exit(1)
 	}

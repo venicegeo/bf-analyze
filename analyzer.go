@@ -51,29 +51,26 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 		detectedClosed bool
 	)
 	// Go from GeoJSON to GEOS
-	baselineGeometry, err = toGeos(*baselineFeature)
-	if err != nil {
+	if baselineGeometry, err = toGeos(*baselineFeature); err != nil {
 		return err
 	}
 	// And from GEOS to a GEOS LineString
-	baselineGeometry, err = lineStringFromGeometry(baselineGeometry)
-	if err != nil {
+	if baselineGeometry, err = lineStringFromGeometry(baselineGeometry); err != nil {
 		return err
 	}
-	baselineClosed, err = baselineGeometry.IsClosed()
-	if err != nil {
+	if baselineClosed, err = baselineGeometry.IsClosed(); err != nil {
 		return err
 	}
-	count, err = (*detectedGeometries).NGeometry()
+	if count, err = (*detectedGeometries).NGeometry(); err != nil {
+		return err
+	}
 	for inx := 0; inx < count; inx++ {
-		detectedGeometry, err = (*detectedGeometries).Geometry(inx)
-		if err != nil {
+		if detectedGeometry, err = (*detectedGeometries).Geometry(inx); err != nil {
 			return err
 		}
 
 		// To be a match they must both have the same closedness...
-		detectedClosed, err = detectedGeometry.IsClosed()
-		if err != nil {
+		if detectedClosed, err = detectedGeometry.IsClosed(); err != nil {
 			return err
 		}
 		if baselineClosed != detectedClosed {
@@ -81,8 +78,7 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 		}
 
 		// And somehow overlap each other (not be disjoint)...
-		disjoint, err = baselineGeometry.Disjoint(detectedGeometry)
-		if err != nil {
+		if disjoint, err = baselineGeometry.Disjoint(detectedGeometry); err != nil {
 			return err
 		}
 
@@ -110,8 +106,7 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 
 			// And replace the geometry with a GeometryCollection [baseline, detected]
 			gc := geojson.GeometryCollection{Type: geojson.GEOMETRYCOLLECTION}
-			newGeometry, err = fromGeos(detectedGeometry)
-			if err != nil {
+			if newGeometry, err = fromGeos(detectedGeometry); err != nil {
 				return err
 			}
 			slice := [...]interface{}{baselineFeature.Geometry, newGeometry}
@@ -134,28 +129,27 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 }
 func qualitativeReview(detected Scene, baseline Scene) error {
 	var (
-		matchedFeatures []geojson.Feature
-		geometry        *geos.Geometry
-		err             error
-		bytes           []byte
-		count           int
+		matchedFeatures    []geojson.Feature
+		geometry           *geos.Geometry
+		err                error
+		bytes              []byte
+		count              int
+		features           []geojson.Feature
+		detectedGeometries *geos.Geometry
 	)
 
-	features, err := baseline.Features()
-	if err != nil {
+	if features, err = baseline.Features(); err != nil {
 		return err
 	}
 
-	detectedGeometries, err := detected.MultiLineString()
-	if err != nil {
+	if detectedGeometries, err = detected.MultiLineString(); err != nil {
 		return err
 	}
 
 	// Try to match the geometry for each feature with what we detected
-	for inx := 0; inx < len(features); inx++ {
+	for inx := range features {
 		feature := features[inx]
-		err = matchFeature(&feature, &detectedGeometries)
-		if err != nil {
+		if err = matchFeature(&feature, &detectedGeometries); err != nil {
 			return err
 		}
 
@@ -165,15 +159,15 @@ func qualitativeReview(detected Scene, baseline Scene) error {
 	// Construct new features for the geometries that didn't match up
 	var newDetection = make(map[string]interface{})
 	newDetection[DETECTION] = "New Detection"
-	count, err = detectedGeometries.NGeometry()
+	if count, err = detectedGeometries.NGeometry(); err != nil {
+		return err
+	}
 	for inx := 0; inx < count; inx++ {
 		var gjGeometry interface{}
-		geometry, err = detectedGeometries.Geometry(inx)
-		if err != nil {
+		if geometry, err = detectedGeometries.Geometry(inx); err != nil {
 			return err
 		}
-		gjGeometry, err = fromGeos(geometry)
-		if err != nil {
+		if gjGeometry, err = fromGeos(geometry); err != nil {
 			return err
 		}
 		feature := geojson.Feature{Type: geojson.FEATURE,
@@ -182,12 +176,11 @@ func qualitativeReview(detected Scene, baseline Scene) error {
 		matchedFeatures = append(matchedFeatures, feature)
 	}
 
+	fc := geojson.NewFeatureCollection(matchedFeatures)
+	bytes, err = json.Marshal(fc)
+
 	if err == nil {
-		fc := geojson.NewFeatureCollection(matchedFeatures)
-		bytes, err = json.Marshal(fc)
-		if err == nil {
-			fmt.Printf("%v\n", string(bytes))
-		}
+		fmt.Printf("%v\n", string(bytes))
 	}
 	return err
 }
@@ -225,16 +218,15 @@ func quantitativeReview(scene Scene, envelope *geos.Geometry) error {
 		negativeArea float64
 	)
 
-	geometries, err = scene.MultiLineString()
-	if err != nil {
+	if geometries, err = scene.MultiLineString(); err != nil {
 		return err
 	}
-
-	mpolygon, err = mlsToMPoly(geometries)
-	if err != nil {
+	if mpolygon, err = mlsToMPoly(geometries); err != nil {
 		return err
 	}
-	count, err = mpolygon.NGeometry()
+	if count, err = mpolygon.NGeometry(); err != nil {
+		return err
+	}
 	var polygonMetadatas = make([]polygonMetadata, count)
 
 	for inx := 0; inx < count; inx++ {
@@ -245,21 +237,17 @@ func quantitativeReview(scene Scene, envelope *geos.Geometry) error {
 		}
 		// We need two areas for each component polygon
 		// The total area (which considers holes)
-		polygonMetadatas[inx].totalArea, err = polygon.Area()
-		if err != nil {
+		if polygonMetadatas[inx].totalArea, err = polygon.Area(); err != nil {
 			return err
 		}
 		// The shell (boundary)
-		boundary, err = polygon.Shell()
-		if err != nil {
+		if boundary, err = polygon.Shell(); err != nil {
 			return err
 		}
-		boundary, err = geos.PolygonFromGeom(boundary)
-		if err != nil {
+		if boundary, err = geos.PolygonFromGeom(boundary); err != nil {
 			return err
 		}
-		polygonMetadatas[inx].boundaryArea, err = boundary.Area()
-		if err != nil {
+		if polygonMetadatas[inx].boundaryArea, err = boundary.Area(); err != nil {
 			return err
 		}
 
@@ -274,12 +262,10 @@ func quantitativeReview(scene Scene, envelope *geos.Geometry) error {
 			if (inx == jnx) || (polygonMetadatas[jnx].link != nil) {
 				continue
 			}
-			polygon2, err = mpolygon.Geometry(jnx)
-			if err != nil {
+			if polygon2, err = mpolygon.Geometry(jnx); err != nil {
 				return err
 			}
-			touches, err = polygon2.Touches(polygon)
-			if err != nil {
+			if touches, err = polygon2.Touches(polygon); err != nil {
 				return err
 			}
 			// And it touches the current polygon, register the link
@@ -307,8 +293,4 @@ func quantitativeReview(scene Scene, envelope *geos.Geometry) error {
 	}
 	log.Printf("+:%v -:%v Sum: %v Total:%v\n", positiveArea, negativeArea, positiveArea-negativeArea, positiveArea+negativeArea)
 	return err
-}
-func quantitativeReview2(detectedGeometries *geos.Geometry, baselineGeometries *geos.Geometry) error {
-	// walk through
-	return nil
 }

@@ -25,28 +25,28 @@ import (
 
 // TestScene Unit test for this object
 func TestScene(t *testing.T) {
+	var (
+		envelope      *geos.Geometry
+		baselineScene Scene
+		detectedScene Scene
+		err           error
+	)
 	filenameB := "test/baseline.geojson"
 	filenameD := "test/detected.geojson"
-	baselineScene, err := parseGeoJSONFile(filenameB)
-	if err != nil {
+	if baselineScene, err = parseGeoJSONFile(filenameB); err != nil {
 		t.Error(err.Error())
 	}
-	detectedScene, err := parseGeoJSONFile(filenameD)
-	if err != nil {
+	if detectedScene, err = parseGeoJSONFile(filenameD); err != nil {
 		t.Error(err.Error())
 	}
-	var envelope *geos.Geometry
-	envelope, err = detectedScene.envelope()
-	if err != nil {
+	if envelope, err = detectedScene.envelope(); err != nil {
 		t.Error(err.Error())
 	}
 	log.Printf("Envelope: %v\n", envelope.String())
-	err = baselineScene.clip(detectedScene)
-	if err != nil {
+	if err = baselineScene.clip(detectedScene); err != nil {
 		t.Error(err.Error())
 	}
-	envelope, err = baselineScene.envelope()
-	if err != nil {
+	if envelope, err = baselineScene.envelope(); err != nil {
 		t.Error(err.Error())
 	}
 	log.Printf("Envelope: %v\n", envelope.String())
