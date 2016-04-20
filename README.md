@@ -3,10 +3,22 @@
 ## Overview
 A toolkit for analyzing the results of BeachFront shoreline detection.
 
-### Building
-`bf-analyze` is written in Go and depends on go-geos which requires GEOS, a C/C++ library.
+### Dependencies
+`bf-analyze` is written in Go. Use `go get` to get its dependencies.
 
-1. https://github.com/paulsmith/gogeos#installation
+#### GEOS
+It depends on go-geos which requires GEOS, a C/C++ library.
+- https://github.com/paulsmith/gogeos#installation
+
+#### bf-line-analyzer
+The metrics (see below) use a GEOS-based C++ application called `bf-line-analyzer`.
+- https://github.com/venicegeo/bf-line-analyzer
+- mkdir bld
+- cd bld
+- make
+- Set an environment variable `BF_LINE_ANALYZER_DIR` to be the directory of the repository.
+
+### Building
 1. `go build`
 
 ### What it Does
@@ -19,6 +31,10 @@ The output is GeoJSON with a `Detection` property on each feature.
 In this case the geometry will be a GeometryCollection consisting of the detected geometry followed by the baseline geometry.
 * `Not Detected` means a feature in the baseline was not detected.
 * `New Detection` means a feature in the detected file does not have a corresponding entry in the baseline.
+
+##### Metrics
+When `Detected`, we run some simple metrics on the baseline and detected. 
+These are added as properties to the GeoJSON feature.
 
 #### Quantitative Analysis
 The quantitative analysis determines the amount of positive/negative space in a scene.
