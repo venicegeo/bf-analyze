@@ -171,7 +171,7 @@ func multiPolygonize(input []*geos.Geometry) (*geos.Geometry, error) {
 		return nil, err
 	}
 
-	// Write the MLS to a temp file
+	// Write the MLS to a temp file as WKT
 	geometryString, err = mls.ToWKT()
 	file, err = ioutil.TempFile("", "mls")
 	if err != nil {
@@ -182,7 +182,8 @@ func multiPolygonize(input []*geos.Geometry) (*geos.Geometry, error) {
 	file.Write([]byte(geometryString))
 
 	// Call our other application, which returns WKT
-	cmd := exec.Command("/Users/JeffYutzler/projects/venicegeo/bf-line-analyzer/bld/bf_la", "-mlp", file.Name())
+	bfla := os.Getenv("BF_LINE_ANALYZER_DIR") + "/bld/bf_la"
+	cmd := exec.Command(bfla, "-mlp", file.Name())
 	bytes, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -321,4 +322,37 @@ func lineStringsToFloat64Data(first, second *geos.Geometry) (stats.Float64Data, 
 		data[inx] = distance
 	}
 	return stats.LoadRawData(data), err
+}
+
+func centroidCoordsXY(input *geos.Geometry) (float64, float64, error) {
+	var (
+		centroid         *geos.Geometry
+		resultX, resultY float64
+		err              error
+	)
+	if centroid, err = input.Centroid(); err != nil {
+		return 0, 0, err
+	}
+	if resultX, err = centroid.X(); err != nil {
+		return 0, 0, err
+	}
+	if resultY, err = centroid.Y(); err != nil {
+		return 0, 0, err
+	}
+	return resultX, resultY, err
+}
+
+func displace(input *geos.Geometry, xShift float64, yShift float64) (*geos.Geometry, error) {
+	var (
+		coords []geos.Coord
+		err    error
+	)
+	if coords, err = input.Coords(); err != nil {
+		return nil, err
+	}
+	for inx := range coords {
+		coords[inx].X -= xShift
+		coords[inx].Y -= yShift
+	}
+	return geos.NewLineString(coords[:]...)
 }

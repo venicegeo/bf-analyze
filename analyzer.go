@@ -30,13 +30,58 @@ const (
 	// DETECTION is the key for the GeoJSON property indicating whether a shoreline
 	// was previously detected
 	DETECTION = "detection"
-	// DETECTEDSTATS is the key for the GeoJSON property indicating the variance
-	// between the detected points and baseline linestring
+	// DETECTEDSTATS is the key for the GeoJSON property containing the statistics
+	// of the variance between the detected points and baseline linestring
 	DETECTEDSTATS = "detected_stats"
-	// BASELINESTATS is the key for the GeoJSON property indicating the variance
-	// between the baseline points and detected linestring
+	// BASELINESTATS is the key for the GeoJSON property containing the statistics
+	// of the variance between the detected points and baseline linestring
 	BASELINESTATS = "baseline_stats"
+	// DETECTIONBIAS is the key for the GeoJSON property indicating the bias
+	// detected between the detected and baseline features
+	DETECTIONBIAS = "detection_bias"
 )
+
+func measureDisplacement(baseline, detected *geos.Geometry) (map[string]interface{}, error) {
+	var (
+		northingBias float64
+		eastingBias  float64
+		bcy          float64 // baseline centroid northing
+		bcx          float64 // baseline centroid easting
+		dcy          float64 // detected centroid northing
+		dcx          float64 // detected centroid easting
+		err          error
+		data         stats.Float64Data
+		biasMap      = make(map[string]interface{})
+	)
+	if bcx, bcy, err = centroidCoordsXY(baseline); err != nil {
+		return nil, err
+	}
+	if dcx, dcy, err = centroidCoordsXY(detected); err != nil {
+		return nil, err
+	}
+	northingBias = dcy - bcy
+	eastingBias = dcx - bcx
+	biasMap["northing"] = northingBias
+	biasMap["easting"] = eastingBias
+
+	// Correct for bias by displacing in the opposite direction
+	if detected, err = displace(detected, -eastingBias, -northingBias); err != nil {
+		return nil, err
+	}
+	if data, err = lineStringsToFloat64Data(detected, baseline); err != nil {
+		return nil, err
+	}
+	if biasMap[DETECTEDSTATS], err = populateStatistics(data); err != nil {
+		return nil, err
+	}
+	if data, err = lineStringsToFloat64Data(baseline, detected); err != nil {
+		return nil, err
+	}
+	if biasMap[BASELINESTATS], err = populateStatistics(data); err != nil {
+		return nil, err
+	}
+	return biasMap, nil
+}
 
 // matchFeature looks for geometries that match the given feature
 // If a match is found, the feature is updated and the geometry is removed from the input collection
@@ -101,6 +146,10 @@ func matchFeature(baselineFeature *geojson.Feature, detectedGeometries **geos.Ge
 				return err
 			}
 			if detected[BASELINESTATS], err = populateStatistics(data); err != nil {
+				return err
+			}
+
+			if detected[DETECTIONBIAS], err = measureDisplacement(baselineGeometry, detectedGeometry); err != nil {
 				return err
 			}
 

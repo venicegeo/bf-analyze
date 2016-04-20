@@ -51,3 +51,12 @@ func TestScene(t *testing.T) {
 	}
 	log.Printf("Envelope: %v\n", envelope.String())
 }
+
+// TestDisplace tries out displacing a Geos Geometry
+func TestDisplace(t *testing.T) {
+	coords := [...]geos.Coord{{X: 0.0, Y: 1.0}, {X: 2.0, Y: 2.0}}
+	geom, _ := geos.NewLineString(coords[:]...)
+	log.Printf("Geom: %v", geom.String())
+	geom, _ = displace(geom, 2, 3)
+	log.Printf("Geom: %v", geom.String())
+}
