@@ -1,0 +1,5 @@
+{
+	"CliCmd":"bf-analyze",
+	"PzJobAddr":"https://pz-gateway.stage.geointservices.io/job",
+	"PzFileAddr":"https://pz-gateway.stage.geointservices.io/file"
+}
