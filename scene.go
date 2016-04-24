@@ -17,8 +17,7 @@ limitations under the License.
 package main
 
 import (
-	"errors"
-	"io/ioutil"
+	"fmt"
 
 	"github.com/paulsmith/gogeos/geos"
 	"github.com/venicegeo/geojson-go/geojson"
@@ -28,15 +27,6 @@ import (
 type Scene struct {
 	geoJSON         interface{}
 	multiLineString *geos.Geometry
-}
-
-func parseGeoJSONFile(filename string) (Scene, error) {
-	var result Scene
-	bytes, err := ioutil.ReadFile(filename)
-	if err == nil {
-		result.geoJSON, err = geojson.Parse(bytes)
-	}
-	return result, err
 }
 
 // MultiLineString creates a geos.MultiLineString from the input and joins
@@ -51,47 +41,42 @@ func (s Scene) MultiLineString() (*geos.Geometry, error) {
 		err      error
 	)
 
-	result, err = geos.NewCollection(geos.MULTILINESTRING)
+	result, _ = geos.NewCollection(geos.MULTILINESTRING)
 
 	// Pluck the geometries into an array
-	detectedGJGeometries := geojson.ToGeometryArray(s.geoJSON)
-
-	for inx := 0; inx < len(detectedGJGeometries); inx++ {
+	gjGeometries := geojson.ToGeometryArray(s.geoJSON)
+	for _, current := range gjGeometries {
 		// Transform the GeoJSON to a GEOS Geometry
-		geometry, err = toGeos(detectedGJGeometries[inx])
-		if err == nil {
-			// If we get a polygon, we really just want its outer ring for now
-			ttype, _ := geometry.Type()
-			if ttype == geos.POLYGON {
-				geometry, err = geometry.Shell()
-			}
-			if err == nil {
-				result, err = result.Union(geometry)
+		if geometry, err = toGeos(current); err != nil {
+			return nil, err
+		}
+		// If we get a polygon, we really just want its outer ring here
+		ttype, _ := geometry.Type()
+		if ttype == geos.POLYGON {
+			if geometry, err = geometry.Shell(); err != nil {
+				return nil, err
 			}
 		}
-		if err != nil {
-			break
+		if result, err = result.Union(geometry); err != nil {
+			return nil, err
 		}
 	}
-
-	if err == nil {
-		// Join the geometries when possible
-		result, err = result.LineMerge()
+	// Join the geometries when possible
+	if result, err = result.LineMerge(); err != nil {
+		return nil, err
 	}
-	if err == nil {
-		s.multiLineString = result
-	}
+	s.multiLineString = result
 	return s.multiLineString, err
 }
 
 // Features returns the GeoJSON Features
-func (s Scene) Features() ([]geojson.Feature, error) {
+func (s Scene) features() ([]*geojson.Feature, error) {
 
 	switch fc := s.geoJSON.(type) {
-	case geojson.FeatureCollection:
+	case *geojson.FeatureCollection:
 		return fc.Features, nil
 	default:
-		return nil, errors.New("GeoJSON input must be a FeatureCollection.")
+		return nil, fmt.Errorf("GeoJSON input must be a *FeatureCollection, not %T", fc)
 	}
 }
 

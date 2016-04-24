@@ -47,11 +47,11 @@ func toGeos(input interface{}) (*geos.Geometry, error) {
 	)
 
 	switch gt := input.(type) {
-	case geojson.Point:
+	case *geojson.Point:
 		geometry, err = geos.NewPoint(parseCoord(gt.Coordinates))
-	case geojson.LineString:
+	case *geojson.LineString:
 		geometry, err = geos.NewLineString(parseCoordArray(gt.Coordinates)...)
-	case geojson.Polygon:
+	case *geojson.Polygon:
 		var coords []geos.Coord
 		var coordsArray [][]geos.Coord
 		for jnx := 0; jnx < len(gt.Coordinates); jnx++ {
@@ -59,7 +59,7 @@ func toGeos(input interface{}) (*geos.Geometry, error) {
 			coordsArray = append(coordsArray, coords)
 		}
 		geometry, err = geos.NewPolygon(coordsArray[0], coordsArray[1:]...)
-	case geojson.MultiPoint:
+	case *geojson.MultiPoint:
 		var points []*geos.Geometry
 		var point *geos.Geometry
 		for jnx := 0; jnx < len(gt.Coordinates); jnx++ {
@@ -67,7 +67,7 @@ func toGeos(input interface{}) (*geos.Geometry, error) {
 			points = append(points, point)
 		}
 		geometry, err = geos.NewCollection(geos.MULTIPOINT, points...)
-	case geojson.MultiLineString:
+	case *geojson.MultiLineString:
 		var lineStrings []*geos.Geometry
 		var lineString *geos.Geometry
 		for jnx := 0; jnx < len(gt.Coordinates); jnx++ {
@@ -76,14 +76,14 @@ func toGeos(input interface{}) (*geos.Geometry, error) {
 		}
 		geometry, err = geos.NewCollection(geos.MULTILINESTRING, lineStrings...)
 
-	case geojson.GeometryCollection:
-		err = errors.New("Unimplemented GeometryCollection")
-	case geojson.MultiPolygon:
-		err = errors.New("Unimplemented MultiPolygon")
-	case geojson.Feature:
+	case *geojson.GeometryCollection:
+		err = errors.New("Unimplemented GeometryCollection in toGeos")
+	case *geojson.MultiPolygon:
+		err = errors.New("Unimplemented MultiPolygon in toGeos")
+	case *geojson.Feature:
 		return toGeos(gt.Geometry)
 	default:
-		err = fmt.Errorf("Unexpected type %T\n", gt)
+		err = fmt.Errorf("Unexpected type in toGeos: %T\n", gt)
 	}
 	return geometry, err
 }

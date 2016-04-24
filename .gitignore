@@ -2,3 +2,5 @@ bf-analyze
 out.geojson
 out.wkt
 .DS_Store
+test/out.geojson
+dummy.txt

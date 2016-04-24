@@ -21,32 +21,39 @@ import (
 	"os"
 
 	"github.com/paulsmith/gogeos/geos"
+	"github.com/venicegeo/geojson-go/geojson"
 )
 
 func main() {
 	var (
-		args                = os.Args[1:]
-		filename, filenameB string
-		detectedEnvelope    *geos.Geometry
-		err                 error
-		detected, baseline  Scene
+		args               = os.Args[1:]
+		filenameD          string
+		filenameB          string
+		filenameOut        string
+		detectedEnvelope   *geos.Geometry
+		err                error
+		detected, baseline Scene
+		fc                 *geojson.FeatureCollection
 	)
-	if len(args) > 1 {
-		filename = args[0]
+
+	if len(args) > 2 {
+		filenameD = args[0]
 		filenameB = args[1]
+		filenameOut = args[2]
 	} else {
-		filename = "test/detected.geojson"
+		filenameD = "test/detected.geojson"
 		filenameB = "test/baseline.geojson"
+		filenameOut = "test/out.geojson"
 	}
 
 	// Retrieve the detected features as a GeoJSON MultiLineString
-	if detected, err = parseGeoJSONFile(filename); err != nil {
+	if detected.geoJSON, err = geojson.ParseFile(filenameD); err != nil {
 		log.Printf("File read error: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Retrieve the baseline features as a GeoJSON MultiLineString
-	if baseline, err = parseGeoJSONFile(filenameB); err != nil {
+	if baseline.geoJSON, err = geojson.ParseFile(filenameB); err != nil {
 		log.Printf("File read error: %v\n", err)
 		os.Exit(1)
 	}
@@ -57,23 +64,28 @@ func main() {
 	}
 
 	// Qualitative Review: What features match, are new, or are missing
-	if err = qualitativeReview(detected, baseline); err != nil {
+	if fc, err = qualitativeReview(detected, baseline); err != nil {
 		log.Printf("Qualitative Review failed: %v\n", err)
+		os.Exit(1)
+	}
+	if err = geojson.WriteFile(fc, filenameOut); err != nil {
+		log.Printf("Failed to write output of qualitative review: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Quantitative Review: what is the land/water area for the two
+	// This is flawed becuse we are mutating our inputs
 	if detectedEnvelope, err = detected.envelope(); err != nil {
 		log.Printf("Could not retrieve envelope: %v\n", err)
 		os.Exit(1)
 	}
 	if err = quantitativeReview(baseline, detectedEnvelope); err != nil {
-		log.Printf("Quantitative review failed: %v\n", err)
+		log.Printf("Quantitative review of baseline failed: %v\n", err)
 		os.Exit(1)
 	}
 
 	if err = quantitativeReview(detected, detectedEnvelope); err != nil {
-		log.Printf("Quantitative review failed: %v\n", err)
+		log.Printf("Quantitative review of detected failed: %v\n", err)
 		os.Exit(1)
 	}
 }

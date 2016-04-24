@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/paulsmith/gogeos/geos"
+	"github.com/venicegeo/geojson-go/geojson"
 )
 
 // TestScene Unit test for this object
@@ -33,14 +34,14 @@ func TestScene(t *testing.T) {
 	)
 	filenameB := "test/baseline.geojson"
 	filenameD := "test/detected.geojson"
-	if baselineScene, err = parseGeoJSONFile(filenameB); err != nil {
-		t.Error(err.Error())
+	if baselineScene.geoJSON, err = geojson.ParseFile(filenameB); err != nil {
+		t.Errorf("Failed to parse input file %v: %v", filenameB, err.Error())
 	}
-	if detectedScene, err = parseGeoJSONFile(filenameD); err != nil {
-		t.Error(err.Error())
+	if detectedScene.geoJSON, err = geojson.ParseFile(filenameD); err != nil {
+		t.Errorf("Failed to parse input file %v: %v", filenameD, err.Error())
 	}
 	if envelope, err = detectedScene.envelope(); err != nil {
-		t.Error(err.Error())
+		t.Errorf("Failed to produced the detected scene envelope: %v", err.Error())
 	}
 	log.Printf("Envelope: %v\n", envelope.String())
 	if err = baselineScene.clip(detectedScene); err != nil {
