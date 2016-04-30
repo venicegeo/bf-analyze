@@ -1,5 +1,7 @@
 {
 	"CliCmd":"bf-analyze",
+  "Port":8089,
 	"PzJobAddr":"https://pz-gateway.stage.geointservices.io/job",
-	"PzFileAddr":"https://pz-gateway.stage.geointservices.io/file"
+	"PzFileAddr":"https://pz-gateway.stage.geointservices.io/file",
+  "Description":"Analyzer for Beachfront shoreline detection operations"
 }
